@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sysinfo.h"
 
 struct cpu cpus[NCPU];
 
@@ -16,6 +17,7 @@ int nextpid = 1;
 struct spinlock pid_lock;
 
 extern void forkret(void);
+extern uint64 count_freemem();
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
@@ -321,6 +323,8 @@ fork(void)
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
+
+  np->mask = p->mask;
 
   return pid;
 }
@@ -685,4 +689,30 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// count the number of unused processes
+uint64 count_unusedproc(void) {
+  struct proc *p;
+  uint64 count;
+
+  count = 0;
+  for(p = proc; p < &proc[NPROC]; p++) {
+    if(p->state != UNUSED) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+int sysinfo(uint64 addr) {
+  struct proc *p = myproc();
+  struct sysinfo si;
+  si.freemem = count_freemem();
+  si.nproc = count_unusedproc(); 
+  if(copyout(p->pagetable, addr, (char *)&si, sizeof(si)) < 0) {
+      return -1;
+  }
+  return 0;
 }

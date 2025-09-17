@@ -1,0 +1,6 @@
+usertrap()
+7
+usermode
+8000204e:	00002683          	lw	a3,0(zero) # 0 <_entry-0x80000000>; a3
+program tried to read address 0; address 0 is not mapped in the kernel address space; scause = 0xd, means Load page fault
+initcode; 1
