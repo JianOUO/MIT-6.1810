@@ -82,6 +82,9 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+// One pagetable is allocated one page, PageSize = 4096 bytes = 2 ^ 15 bits, PTESize = 64 bits = 2 ^ 6 bits, so one pagetable contains 2 ^ 9 PTEs, 
+// virtual address's middle 27 bits are divided into 3 x 9 bits to select PTEs in three pagetables, 
+// virtual address's lower 12 bits map to 2 ^ 12 bytes = PageSize.
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
@@ -448,4 +451,44 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+// for lab: print a page table
+void walkprint(pagetable_t pgtbl, int depth) {
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pgtbl[i];
+    if (pte & PTE_V) {
+      uint64 child = PTE2PA(pte);
+      for (int j = 0; j < depth - 1; j++) printf(".. ");
+      printf("..%d: pte %p pa %p\n", i, pte, child);
+      if (!(pte & (PTE_X | PTE_W | PTE_R))) {
+        walkprint((pagetable_t)child, depth + 1);
+      }
+    }
+  }
+}
+
+void vmprint(pagetable_t pgtbl) {
+  printf("page table %p\n", pgtbl);
+  walkprint(pgtbl, 1);  
+}
+
+// for lab: Detect which pages have been accessed
+int pgaccess(pagetable_t pgtbl, uint64 va, int npages, uint64 abits_va) {
+  uint32 abits = 0;
+  uint64 a;
+  pte_t *pte;
+  //if (va % PGSIZE != 0) panic("pgaccess: not aligned");
+  if (npages > 32) panic("pgaccess: npages > 32");
+  for(a = va; a < va + npages * PGSIZE; a += PGSIZE) {
+    if ((pte = walk(pgtbl, a, 0)) == 0) panic("pgaccess: walk");
+    if ((*pte & PTE_V) == 0) panic("pgaccess: not mapped");
+    if(PTE_FLAGS(*pte) == PTE_V) panic("pgaccess: not a leaf");
+    if (*pte & PTE_A) {
+      *pte &= ~PTE_A;
+      abits |= (1L << ((a - va) / PGSIZE));
+    }
+  }
+  if (copyout(pgtbl, abits_va, (char *)&abits, sizeof(abits)) < 0) panic("pgaccess: copyout");
+  return 0;
 }

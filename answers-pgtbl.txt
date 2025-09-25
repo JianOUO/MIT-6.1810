@@ -1,0 +1,2 @@
+For every leaf page in the vmprint output, it contains 10 reserved bits, 44 bits for physical page number and 10 bits for flags that tell the paging hardware how the associated virtual address is
+allowed to be used.
