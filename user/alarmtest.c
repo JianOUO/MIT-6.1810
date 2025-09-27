@@ -48,6 +48,7 @@ test0()
   int i;
   printf("test0 start\n");
   count = 0;
+  printf("1handler: %p", periodic);
   sigalarm(2, periodic);
   for(i = 0; i < 1000*500000; i++){
     if((i % 1000000) == 0)

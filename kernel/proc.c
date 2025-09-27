@@ -55,6 +55,9 @@ procinit(void)
       initlock(&p->lock, "proc");
       p->state = UNUSED;
       p->kstack = KSTACK((int) (p - proc));
+      p->interval = 0;
+      p->handler = 0;
+      p->ticks_passed = 0;
   }
 }
 

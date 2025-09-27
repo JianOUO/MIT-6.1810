@@ -1,0 +1,6 @@
+register a0-a7 contain arguments to functions. a2 holds 13.
+the compiler inline functions, so no explicit call to f and g.
+0x642
+0x38
+HE110 World. set i to 0x726c6400. no need t0 change 57616.
+We don't provide the argument 2, so the value is undefined, it may be a garbage value on stack.
