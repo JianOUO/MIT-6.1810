@@ -68,11 +68,52 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
+    uint64 scause = r_scause();
+    int interrupt_bit = scause >> 63;
+    int exception_code = scause & 0x7fffffffffffffff;
+    if (interrupt_bit == 0 && exception_code == 15) {
+      pte_t *pte;
+      uint64 pa;
+      uint64 va;
+      char *new_page;
+      uint flags;
+
+      va = PGROUNDDOWN(r_stval());
+      if (va >= MAXVA) goto error;
+      pte = walk(p->pagetable, va, 0);
+      if (pte == 0) goto error;
+      pte_t pte_tmp = *pte;
+      if ((pte_tmp & PTE_V) == 0 || (pte_tmp & PTE_U) == 0) 
+        goto error;
+      if ((pte_tmp & PTE_W) != 0) panic("this va should be unwritable");
+      if ((pte_tmp & PTE_RSW) != 0x100) goto error;
+      pa = PTE2PA(pte_tmp);
+      pte_tmp |= PTE_W;
+      pte_tmp &= ~PTE_RSW;
+      flags = PTE_FLAGS(pte_tmp);
+      // 一开始将uvmunmap(p->pagetable, va, 1, 1)放在这里，没注意这里可能会将pa释放,
+      // 而后续的memmove(new_page, (char *)pa, PGSIZE)还会用到pa。
+      if ((new_page = kalloc()) == 0) {
+        printf("COW trap: kalloc failed\n");
+        setkilled(p);
+        goto next;
+      }
+      memmove(new_page, (char *)pa, PGSIZE);
+      uvmunmap(p->pagetable, va, 1, 1);
+      if (mappages(p->pagetable, va, PGSIZE, (uint64)new_page, flags) != 0) {
+        printf("COW trap: mappages failed\n");
+        kfree(new_page);
+        setkilled(p);
+        goto next;
+      }
+      goto next;
+    }
+ error:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);
   }
-
+ next:
   if(killed(p))
     exit(-1);
 

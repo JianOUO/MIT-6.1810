@@ -190,9 +190,14 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
-    if(do_free){
+    if (a != TRAMPOLINE) {
       uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
+      // 使用原子操作递减引用计数
+      int count = ref_dec(pa);
+      // 如果需要释放，则释放物理页
+      if(do_free && count == 0){
+        kfree((void*)pa);
+      }
     }
     *pte = 0;
   }
@@ -247,6 +252,8 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
     }
     memset(mem, 0, PGSIZE);
     if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+      // mappages 失败，需要释放刚分配的页面
+      ref_dec((uint64)mem);  // 使用原子操作递减引用计数
       kfree(mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -286,10 +293,12 @@ freewalk(pagetable_t pagetable)
       uint64 child = PTE2PA(pte);
       freewalk((pagetable_t)child);
       pagetable[i] = 0;
-    } else if(pte & PTE_V){
+    } else if(pte & PTE_V) {
       panic("freewalk: leaf");
     }
   }
+  // 使用原子操作递减页表页的引用计数
+  ref_dec((uint64)pagetable);
   kfree((void*)pagetable);
 }
 
@@ -311,7 +320,36 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // frees any allocated pages on failure.
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
-{
+{ 
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+
+  for(i = 0; i < sz; i += PGSIZE){
+    if((pte = walk(old, i, 0)) == 0)
+      panic("uvmcopy: pte should exist");
+    if((*pte & PTE_V) == 0)
+      panic("uvmcopy: page not present");
+    pte_t pte_tmp = *pte;
+    pa = PTE2PA(pte_tmp);
+    if (pte_tmp & PTE_W) {
+      pte_tmp &= ~PTE_W;
+      //一开始将这行代码放在if语句外面, 导致原本不可写的页面也被设置了COW bit
+      pte_tmp |= 0x100; // set COW bit 
+    }
+    flags = PTE_FLAGS(pte_tmp);
+    *pte = pte_tmp;
+    if (mappages(new, i, PGSIZE, pa, flags) != 0) {
+      goto err;
+    }
+    ref_inc(pa);  // 使用原子操作增加引用计数
+  }
+  return 0;
+
+ err:
+  uvmunmap(new, 0, i / PGSIZE, 0);
+  return -1;
+  /*
   pte_t *pte;
   uint64 pa, i;
   uint flags;
@@ -337,6 +375,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
  err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
+  */
 }
 
 // mark a PTE invalid for user access.
@@ -366,10 +405,41 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
+    /*
     if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+      (*pte & PTE_W) == 0)
       return -1;
     pa0 = PTE2PA(*pte);
+    */
+    if (pte == 0) return -1;
+    pte_t pte_tmp = *pte;
+    if((pte_tmp & PTE_V) == 0 || (pte_tmp & PTE_U) == 0 ||
+      ((pte_tmp & PTE_W) == 0 && (pte_tmp & PTE_RSW) != 0x100))
+      return -1;
+    pa0 = PTE2PA(pte_tmp);
+    //printf("len: %d\n", len);
+    //printf("va0: %d\n", va0);
+    if ((pte_tmp & PTE_W) == 0) {
+      uint flags;
+      char *new_page;
+      pte_tmp |= PTE_W;
+      pte_tmp &= ~PTE_RSW;
+      flags = PTE_FLAGS(pte_tmp);
+      if ((new_page = kalloc()) == 0) {
+        printf("COW copyout: kalloc failed\n");
+        setkilled(myproc());
+        exit(-1);
+      }
+      memmove(new_page, (char *)pa0, PGSIZE);
+      uvmunmap(pagetable, va0, 1, 1);
+      if (mappages(pagetable, va0, PGSIZE, (uint64)new_page, flags) != 0) {
+        printf("COW copyout: mappages failed\n");
+        setkilled(myproc());
+        exit(-1);
+      }
+      pa0 = (uint64)new_page;
+    }
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;

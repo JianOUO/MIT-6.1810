@@ -181,7 +181,6 @@ int
 main(int argc, char *argv[])
 {
   simpletest();
-
   // check that the first simpletest() freed the physical memory.
   simpletest();
 

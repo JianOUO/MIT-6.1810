@@ -155,12 +155,16 @@ found:
 static void
 freeproc(struct proc *p)
 {
-  if(p->trapframe)
-    kfree((void*)p->trapframe);
-  p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+  if(p->trapframe) {
+    //uint32 index = ((uint64)p->trapframe - KERNBASE) / PGSIZE;
+    //if (ref_count[index] == 0) panic("COW freeproc:: ref_count should not be zero");
+    //ref_count[index]--;
+    kfree((void*)p->trapframe);
+  }
+  p->trapframe = 0;
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;

@@ -7,6 +7,7 @@
 #include "fs.h"
 #include "sleeplock.h"
 #include "file.h"
+#include "memlayout.h"
 
 #define PIPESIZE 512
 
@@ -46,8 +47,10 @@ pipealloc(struct file **f0, struct file **f1)
   return 0;
 
  bad:
-  if(pi)
+  if(pi) {
+    ref_dec((uint64)pi);
     kfree((char*)pi);
+  }
   if(*f0)
     fileclose(*f0);
   if(*f1)
@@ -68,6 +71,7 @@ pipeclose(struct pipe *pi, int writable)
   }
   if(pi->readopen == 0 && pi->writeopen == 0){
     release(&pi->lock);
+    ref_dec((uint64)pi);
     kfree((char*)pi);
   } else
     release(&pi->lock);
