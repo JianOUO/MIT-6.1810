@@ -1,0 +1,11 @@
+thread_switch needs to save/restore only the callee-save registers. Why?
+Because the C compiler generates code in the caller to save caller-saved registers on the stack.
+
+This sets a breakpoint at line 60 of uthread.c. The breakpoint may (or may not) be triggered before you even run uthread. How could that happen?
+GDB的断点记录的是指令的虚拟地址，在执行内核代码时，恰好遇到虚拟地址相同的指令就会触发断点。
+
+Why are there missing keys with 2 threads, but not with 1 thread? Identify a sequence of events with 2 threads that can lead to a key being missing. 
+in function insert():
+  e->value = value;
+  e->next = n;
+

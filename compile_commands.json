@@ -1,0 +1,19 @@
+[
+  {
+    "arguments": [
+      "/usr/lib/ccache/gcc",
+      "-c",
+      "-g",
+      "-O2",
+      "-DSOL_THREAD",
+      "-DLAB_THREAD",
+      "-pthread",
+      "-o",
+      "ph",
+      "notxv6/ph.c"
+    ],
+    "directory": "/home/jian/xv6-labs-2023",
+    "file": "/home/jian/xv6-labs-2023/notxv6/ph.c",
+    "output": "/home/jian/xv6-labs-2023/ph"
+  }
+]
