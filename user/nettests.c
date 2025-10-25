@@ -25,12 +25,14 @@ ping(uint16 sport, uint16 dport, int attempts)
     fprintf(2, "ping: connect() failed\n");
     exit(1);
   }
+  //printf("ping: connect() successed\n");
 
   for(int i = 0; i < attempts; i++) {
     if(write(fd, obuf, strlen(obuf)) < 0){
       fprintf(2, "ping: send() failed\n");
       exit(1);
     }
+    //printf("ping: send() successed\n");
   }
 
   char ibuf[128];
@@ -39,6 +41,7 @@ ping(uint16 sport, uint16 dport, int attempts)
     fprintf(2, "ping: recv() failed\n");
     exit(1);
   }
+  //printf("ping: recv() successed\n");
 
   close(fd);
   ibuf[cc] = '\0';
