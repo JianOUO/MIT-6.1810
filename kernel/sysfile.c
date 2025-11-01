@@ -300,7 +300,7 @@ create(char *path, short type, short major, short minor)
   iunlockput(dp);
   return 0;
 }
-
+/*
 uint64
 sys_open(void)
 {
@@ -328,6 +328,98 @@ sys_open(void)
       return -1;
     }
     ilock(ip);
+    if(ip->type == T_DIR && omode != O_RDONLY){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+  }
+
+  if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
+    if(f)
+      fileclose(f);
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  if(ip->type == T_DEVICE){
+    f->type = FD_DEVICE;
+    f->major = ip->major;
+  } else {
+    f->type = FD_INODE;
+    f->off = 0;
+  }
+  f->ip = ip;
+  f->readable = !(omode & O_WRONLY);
+  f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+
+  if((omode & O_TRUNC) && ip->type == T_FILE){
+    itrunc(ip);
+  }
+
+  iunlock(ip);
+  end_op();
+
+  return fd;
+}
+*/
+
+uint64
+sys_open(void)
+{
+  char path[MAXPATH];
+  int fd, omode;
+  struct file *f;
+  struct inode *ip;
+  int n;
+  int recur = 0;
+
+  argint(1, &omode);
+  if((n = argstr(0, path, MAXPATH)) < 0)
+    return -1;
+
+  begin_op();
+
+  if(omode & O_CREATE){
+    ip = create(path, T_FILE, 0, 0);
+    if(ip == 0){
+      end_op();
+      return -1;
+    }
+  } else {
+    if((ip = namei(path)) == 0){
+      end_op();
+      return -1;
+    }
+    ilock(ip);
+    while (ip->type == T_SYMLINK && recur < 10 && !(omode & O_NOFOLLOW)) {
+      if ((n = readi(ip, 0, (uint64)path, 0, MAXPATH)) <= 0) {
+        printf("sys_open: readi return %d\n", n);
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlockput(ip);
+      printf("path: %s\n", path);
+      if ((ip = namei(path)) == 0) {
+        end_op();
+        return -1;
+      }
+      recur++;
+      ilock(ip);
+    }
+    if (recur >= 10) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -501,5 +593,37 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void) {
+  //printf("sys_symlink\n");
+  char target[MAXPATH], path[MAXPATH];
+  struct inode *ip;
+  int r;
+
+  if (argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+  //printf("target: %s\npath:%s\n", target, path);
+  begin_op();
+
+  ip = create(path, T_SYMLINK, 0, 0);
+  if (ip == 0) {
+    end_op();
+    return -1;
+  }
+  //printf("symlink: ip create succeed\n");
+
+  r = writei(ip, 0, (uint64)target, 0, (uint)(strlen(target) + 1));
+  iunlockput(ip);
+  end_op();
+  
+  if (r != strlen(target) + 1) {
+    printf("symlink: r = %d\nstrlen(target)+1 = %d\n", r, strlen(target) + 1);
+    return -1;
+  }
+  //printf("symlink: writei succeed\n");
+
   return 0;
 }
