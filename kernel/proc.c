@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "fcntl.h"
+#include "file.h"
 
 struct cpu cpus[NCPU];
 
@@ -55,6 +59,7 @@ procinit(void)
       initlock(&p->lock, "proc");
       p->state = UNUSED;
       p->kstack = KSTACK((int) (p - proc));
+      p->vatop = TRAPFRAME;
   }
 }
 
@@ -308,6 +313,19 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  p->vatop = np->vatop;
+  for (int i = 0; i < VMALEN; i++) {
+    if (p->vma_list[i].used) {
+      np->vma_list[i].used = 1;
+      np->vma_list[i].f = p->vma_list[i].f;
+      filedup(p->vma_list[i].f);
+      np->vma_list[i].flags = p->vma_list[i].flags;
+      np->vma_list[i].prot = p->vma_list[i].prot;
+      np->vma_list[i].va_len = p->vma_list[i].va_len;
+      np->vma_list[i].va_start = p->vma_list[i].va_start;
+    }
+  }
+
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -347,9 +365,48 @@ void
 exit(int status)
 {
   struct proc *p = myproc();
+  uint64 va_start;
+  uint64 va_len;
+  uint64 addr;
+  struct file *f;
+  int r;
 
   if(p == initproc)
     panic("init exiting");
+
+  for (int i = 0; i < VMALEN; i++) {
+    if (p->vma_list[i].used) {
+      va_start = p->vma_list[i].va_start;
+      va_len = p->vma_list[i].va_len;
+      f = p->vma_list[i].f;
+      for (int j = 0; j < va_len / PGSIZE; j++) {
+        if ((addr = walkaddr(p->pagetable, va_start + j * PGSIZE)) != 0) {
+          if (p->vma_list[i].flags == MAP_SHARED && p->vma_list[i].prot & PROT_WRITE && f->writable != 0) {
+            int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+            int k = 0;
+            while (k < PGSIZE) {
+              int n1 = PGSIZE - k;
+              if (n1 > max)
+                n1 = max;
+              begin_op();
+              ilock(f->ip);
+              if ((r = writei(f->ip, 0, addr + k, f->off, n1)) > 0)
+                f->off += r;
+              iunlock(f->ip);
+              end_op();
+              if (r != n1) {
+                panic("exit: writei failed\n");
+              }
+              k += r;
+            }
+          }
+          uvmunmap(p->pagetable, va_start + j * PGSIZE, 1, 1);
+        }
+      }
+      p->vma_list[i].used = 0;
+      fileclose(p->vma_list[i].f);
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){

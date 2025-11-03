@@ -503,3 +503,131 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void) {
+  uint64 len;
+  int prot;
+  int flags;
+  struct file *f;
+  int i;
+
+  argaddr(1, &len);
+  argint(2, &prot);
+  argint(3, &flags);
+  if (argfd(4, 0, &f) < 0) {
+    printf("sys_mmap: argfd failed\n");
+    return -1;
+  }
+  if ((f->writable == 0) && (flags == MAP_SHARED) && (prot & PROT_WRITE)) {
+    return -1;
+  }
+  struct proc *p = myproc();
+  for (i = 0; i < VMALEN; i++) {
+    if (p->vma_list[i].used == 0) {
+      break;
+    }
+  }
+  if (i == VMALEN) {
+    printf("sys_mmap: out of vma_list\n");
+    return -1;
+  }
+  uint64 pagesize = PGROUNDUP(len);
+  p->vatop -= pagesize;
+  if (p->vatop <= p->sz) panic("sys_mmap: mem overlap");
+  p->vma_list[i].f = f;
+  filedup(f);
+  p->vma_list[i].flags = flags;
+  p->vma_list[i].prot = prot;
+  p->vma_list[i].va_len = len;
+  p->vma_list[i].va_start = p->vatop;
+  p->vma_list[i].used = 1;
+  return p->vatop;
+}
+
+uint64
+sys_munmap(void) {
+  uint64 va;
+  uint64 len;
+  uint64 va_start;
+  uint64 va_len;
+  struct file *f;
+  uint64 addr;
+  int r;
+
+  argaddr(0, &va);
+  argaddr(1, &len);
+
+  struct proc *p = myproc();
+  for (int i = 0; i < VMALEN; i++) {
+    if (p->vma_list[i].used) {
+      va_start = p->vma_list[i].va_start;
+      va_len = p->vma_list[i].va_len;
+      f = p->vma_list[i].f;
+      if (va == va_start) {
+        for (int j = 0; j < len / PGSIZE; j++) {
+          if ((addr = walkaddr(p->pagetable, va + j * PGSIZE)) != 0) {
+            if (p->vma_list[i].flags == MAP_SHARED && p->vma_list[i].prot & PROT_WRITE && f->writable != 0) {
+              int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+              int k = 0;
+              while (k < PGSIZE) {
+                int n1 = PGSIZE - k;
+                if (n1 > max)
+                  n1 = max;
+                begin_op();
+                ilock(f->ip);
+                if ((r = writei(f->ip, 0, addr + k, f->off, n1)) > 0)
+                  f->off += r;
+                iunlock(f->ip);
+                end_op();
+                if (r != n1) {
+                  printf("sys_munmap: writei failed\n");
+                  return -1;
+                }
+                k += r;
+              }
+            }
+            uvmunmap(p->pagetable, va + j * PGSIZE, 1, 1);
+          }
+        }
+        if (len == va_len) {
+          p->vma_list[i].used = 0;
+          fileclose(p->vma_list[i].f);
+        } else {
+          p->vma_list[i].va_start += len;
+          p->vma_list[i].va_len -= len;
+        }
+        break;
+      } else if (va + len == va_start + va_len) {
+        for (int j = 0; j < len / PGSIZE; j++) {
+          if ((addr = walkaddr(p->pagetable, va + j * PGSIZE)) != 0) {
+            if (p->vma_list[i].flags == MAP_SHARED && p->vma_list[i].prot & PROT_WRITE && f->writable != 0) { 
+              int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+              int k = 0;
+              while (k < PGSIZE) {
+                int n1 = PGSIZE - k;
+                if (n1 > max)
+                  n1 = max;
+                begin_op();
+                ilock(f->ip);
+                if ((r = writei(f->ip, 0, addr + k, f->off, n1)) > 0)
+                  f->off += r;
+                iunlock(f->ip);
+                end_op();
+                if (r != n1) {
+                  printf("sys_munmap: writei failed\n");
+                  return -1;
+                }
+                k += r;
+              }
+            }
+            uvmunmap(p->pagetable, va + j * PGSIZE, 1, 1);
+          }
+        }
+        p->vma_list[i].va_len -= len;
+        break;
+      }
+    }
+  }
+  return 0;
+}

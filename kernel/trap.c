@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -68,11 +72,69 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
+    uint64 scause = r_scause();
+    int interrupt_bit = scause >> 63;
+    int exception_code = scause & 0x7fffffffffffffff;
+    if (interrupt_bit == 0 && (exception_code == 15 || exception_code == 13)) {
+      uint64 va;
+      uint64 new_page;
+      uint64 va_start;
+      uint64 len;
+      uint64 offset;
+      struct file *f;
+      int flag = PTE_U + PTE_V;
+      
+      va = r_stval();
+      if (va >= MAXVA) goto error;
+      for (int i = 0; i < VMALEN; i++) {
+        va_start = p->vma_list[i].va_start;
+        len = p->vma_list[i].va_len;
+        if (p->vma_list[i].used == 1 && va >= va_start && va < va_start + len) {
+          if ((new_page = (uint64)kalloc()) == 0) {
+            printf("trap: kalloc failed\n");
+            setkilled(p);
+            goto next;
+          }
+          offset = PGROUNDDOWN(va) - va_start;
+          f = p->vma_list[i].f;
+          if (f->readable == 0 && exception_code == 13) {
+            printf("trap: have no right to read\n");
+            goto error;
+          }
+          if (f->writable == 0 && exception_code == 15) {
+            printf("trap: have no right to write\n");
+            goto error;
+          }
+          ilock(f->ip); 
+          int readtot = 0;
+          if ((readtot = readi(f->ip, 0, new_page, offset, PGSIZE)) == -1) {
+            iunlock(f->ip);
+            printf("trap: readi failed\n");
+            printf("readtot=%d len=%d offset=%d\n", readtot, len, offset);
+            goto error;
+          }
+          if (readtot != PGSIZE) memset((void *)(new_page + readtot), 0, PGSIZE - readtot);
+          iunlock(f->ip);
+          if (p->vma_list[i].prot & PROT_READ) flag += PTE_R;
+          if (p->vma_list[i].prot & PROT_WRITE) flag += PTE_W;     
+          //printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+          //printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+          //printf("trap: va = %p flag = %p va_start: %p len: %p\n", PGROUNDDOWN(va), flag, va_start, len);
+          if (mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, new_page, flag) != 0) {
+            printf("trap: mappages failed\n");
+            kfree((void *)new_page);
+            goto error;
+          }
+          goto next;
+        }
+      }
+    }
+error:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);
   }
-
+next:
   if(killed(p))
     exit(-1);
 
